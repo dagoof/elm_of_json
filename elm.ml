@@ -1,22 +1,33 @@
+open Batteries
+
 let (>>>) f g x = g @@ f x
 
+type basic_decoder =
+  [ `Null
+  | `Bool
+  | `String
+  | `Number
+  ] [@@deriving show]
 
-type basic_decoders =
-  | Null
-  | Bool
-  | String
-  | Number
-  | Object of (string * basic_decoders) list
-  | Array  of basic_decoders list
-  | Unsupported [@@deriving show]
+type composite_decoder =
+  [ basic_decoder
+  | `Array  of composite_decoder
+  | `Object of (string * composite_decoder) list
+  | `OneOf  of composite_decoder list
+  ] [@@deriving show]
+
+let unify_decoders decoders =
+  match List.unique decoders with
+  | [x] -> `Array x
+  | xs  -> `OneOf xs
 
 let rec decode = function
-  | `A vals   -> Array  (List.map decode vals)
-  | `O vals   -> Object (List.map (fun (k, v) -> k, decode v) vals)
-  | `Null     -> Null
-  | `Bool   v -> Bool
-  | `Float  v -> Number
-  | `String v -> String
+  | `A vals   -> unify_decoders @@ List.map decode vals
+  | `O vals   -> `Object (List.map (fun (k, v) -> k, decode v) vals)
+  | `Null     -> `Null
+  | `Bool   v -> `Bool
+  | `Float  v -> `Number
+  | `String v -> `String
 
 type 'a tree =
   | Branch of 'a * 'a tree list
@@ -94,4 +105,4 @@ let the_json =
      ]
 
 let () =
-  print_endline @@ show_basic_decoders @@ decode the_json
+  print_endline @@ show_composite_decoder @@ decode the_json
