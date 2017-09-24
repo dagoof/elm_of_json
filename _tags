@@ -1,0 +1,1 @@
+<*>: package(opium,ezjsonm), package(ppx_deriving_yojson,ppx_deriving.std)
