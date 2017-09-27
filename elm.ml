@@ -41,12 +41,59 @@ let mergesets a b =
   let emptyset = Opt.default Set.empty in
   Set.union ( emptyset a ) ( emptyset b )
 
+module Sometimes : sig
+  type 'a t =
+    | Required of 'a
+    | Optional of 'a
+  val map : ( 'a -> 'b ) -> 'a t -> 'b t
+  val required : 'a -> 'a t
+  val optional : 'a -> 'a t
+  val of_t : 'a t -> 'a
+end = struct
+  type 'a t =
+    | Required of 'a
+    | Optional of 'a
+
+  let required v = Required v
+
+  let optional v = Optional v
+
+  let map fn = function
+    | Required v -> required @@ fn v
+    | Optional v -> optional @@ fn v
+
+  let of_t = function
+    | Required v -> v
+    | Optional v -> v
+end
+
+let merge_setmaps key a b =
+  let open Sometimes in
+
+  match (a, b) with
+  | None, Some ( Required v ) ->
+    Opt.some @@ optional v
+  | Some v, None ->
+    Opt.some @@ optional @@ Set.singleton v
+  | Some v, Some something ->
+    Opt.some @@ map ( Set.add v ) something
+  | None, v -> v
+
+let decoder_of_sometimes sometimes =
+  let _decoder = function
+    | Sometimes.Required v -> v
+    | Sometimes.Optional v -> `Optional v
+  in
+
+  _decoder @@ Sometimes.map ( Set.to_list >>> unify_decoders ) sometimes
+
 let combine_objects objs =
   List.of_enum @@
   Enum.map begin fun (key, decoders) ->
-    (key, unify_decoders @@ Set.to_list decoders)
+    (key, decoder_of_sometimes decoders)
   end @@
   Map.enum @@
+  Opt.default Map.empty @@
   List.fold_left begin fun sofar obj ->
     let next =
       List.fold_left begin fun map (field, decoder) ->
@@ -58,8 +105,8 @@ let combine_objects objs =
       end Map.empty obj
     in
 
-    Map.merge (fun key a b -> Opt.some @@ mergesets a b ) sofar next
-  end Map.empty objs
+    Opt.map ( merge_setmaps next ) sofar
+  end None objs
 
 
 let rec decode = function
