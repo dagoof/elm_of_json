@@ -2,6 +2,16 @@ open Batteries
 
 let (>>>) f g x = g @@ f x
 
+module Map = struct
+  include Map
+
+  let to_list =
+    Map.enum >>> List.of_enum
+
+  let of_list =
+    List.enum >>> Map.of_enum
+end
+
 type basic_decoder =
   [ `Null
   | `Bool
@@ -37,10 +47,6 @@ let unify_decoders decoders =
   | [x] -> x
   | xs  -> `OneOf xs
 
-let mergesets a b =
-  let emptyset = Opt.default Set.empty in
-  Set.union ( emptyset a ) ( emptyset b )
-
 module Sometimes : sig
   type 'a t =
     | Required of 'a
@@ -67,16 +73,16 @@ end = struct
     | Optional v -> v
 end
 
-let merge_setmaps key a b =
+let merge_maps key merged next =
   let open Sometimes in
 
-  match (a, b) with
+  match (next, merged) with
+  | Some v, None ->
+    Opt.some @@ optional [v]
   | None, Some ( Required v ) ->
     Opt.some @@ optional v
-  | Some v, None ->
-    Opt.some @@ optional @@ Set.singleton v
   | Some v, Some something ->
-    Opt.some @@ map ( Set.add v ) something
+    Opt.some @@ map (fun vs -> v :: vs) something
   | None, v -> v
 
 let decoder_of_sometimes sometimes =
@@ -85,41 +91,47 @@ let decoder_of_sometimes sometimes =
     | Sometimes.Optional v -> `Optional v
   in
 
-  _decoder @@ Sometimes.map ( Set.to_list >>> unify_decoders ) sometimes
-
-let combine_objects objs =
-  List.of_enum @@
-  Enum.map begin fun (key, decoders) ->
-    (key, decoder_of_sometimes decoders)
-  end @@
-  Map.enum @@
-  Opt.default Map.empty @@
-  List.fold_left begin fun sofar obj ->
-    let next =
-      List.fold_left begin fun map (field, decoder) ->
-        Map.modify_opt field begin fun x ->
-          match x with
-          | Some decoders -> Opt.some @@ Set.add decoder decoders
-          | None ->          Opt.some @@ Set.singleton decoder
-        end map
-      end Map.empty obj
-    in
-
-    Opt.map ( merge_setmaps next ) sofar
-  end None objs
+  _decoder @@ Sometimes.map unify_decoders sometimes
 
 
 let rec decode = function
   | `A vals   ->
     let decoders = List.map decode vals in
-    let objs = `Object ( combine_objects @@ objects decoders ) in
-    `Array (unify_decoders @@ objs :: non_objects decoders)
+
+    let objs =
+      Opt.map
+        (fun combined -> `Object combined)
+        (rudimentary_combine @@ objects decoders )
+    and others = non_objects decoders in
+    let decoders2 =
+      Opt.(default others @@ map2 List.cons objs (some others))
+    in
+
+    `Array (unify_decoders decoders2)
 
   | `O vals   -> `Object (List.map (fun (k, v) -> k, decode v) vals)
   | `Null     -> `Null
   | `Bool   v -> `Bool
   | `Float  v -> `Number
   | `String v -> `String
+
+and rudimentary_combine objs =
+  let whoa sofar next =
+    Opt.some @@
+
+    match sofar with
+    | None ->
+      Map.map (List.singleton >>> Sometimes.required) next
+    | Some stuff ->
+      Map.merge merge_maps stuff next
+  in
+
+  Opt.map Map.to_list @@
+  Opt.map (Map.map decoder_of_sometimes) @@
+  List.fold_left
+    whoa
+    None
+    (List.map Map.of_list objs)
 
 type 'a tree =
   | Branch of 'a * 'a tree list
@@ -199,7 +211,7 @@ let the_json =
      , `A
          [ `O [ "always", `Bool true;   "image_url", `String "https://test.com" ]
          ; `O [ "always", `Bool false;  "user_profile", `String "tester" ]
-         ; `O [ "always", `String "ok"; "image_url", `String "Up"; "user_profile", `String "sure" ]
+         ; `O [ "always", `Bool false; "image_url", `String "Up"; "user_profile", `String "sure" ]
          ; `O [ "always", `Bool true;   "image_url", `Bool false ]
          ]
      ]

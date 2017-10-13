@@ -12,6 +12,9 @@ let bind f = function
 
 let map f = bind ( f >>> some )
 
+let map2 f oa ob =
+  bind (fun a -> map (f a) ob) oa
+
 let default v = function
   | Some v -> v
   | None -> v
