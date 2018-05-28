@@ -1,3 +1,4 @@
+STATICS  := test-json.json
 DEPS     := opt
 PROGRAMS := elm
 NATIVES  := $(PROGRAMS:%=%.native)
@@ -13,7 +14,7 @@ $(RUNNERS): run-%: %.native
 	./$<
 
 $(WATCHERS): watch-%: %.native
-	find $(DEPS:%=%.ml) $*.ml | entr -c make run-$*
+	find $(DEPS:%=%.ml) $(STATICS) $*.ml | entr -c make run-$*
 
 clean:
 	-rm -r $(NATIVES)

@@ -1,6 +1,11 @@
+let basic_open_in = open_in
+
 open Batteries
 
 let (>>>) f g x = g @@ f x
+
+let load_json fname =
+  Ezjsonm.from_channel @@ basic_open_in fname
 
 type basic_decoder =
   [ `Null
@@ -63,10 +68,16 @@ let combine_objects objs =
 
 
 let rec decode = function
+  (*
   | `A vals   ->
     let decoders = List.map decode vals in
     let objs = `Object ( combine_objects @@ objects decoders ) in
     `Array (unify_decoders @@ objs :: non_objects decoders)
+  *)
+
+  | `A vals   ->
+    let decoders = List.map decode vals in
+    unify_decoders decoders
 
   | `O vals   -> `Object (List.map (fun (k, v) -> k, decode v) vals)
   | `Null     -> `Null
@@ -89,29 +100,31 @@ module Elm = struct
     { modul; alias; exposing }
 
   type basic_type =
-    | Bool of bool
-    | Int of int
-    | Float of float
-    | String of string
+    [ `Bool of bool
+    | `Int of int
+    | `Float of float
+    | `String of string
+    ]
 
   type t =
-    | Simple of basic_type
-    | Record of string * t list
-    | List   of t list
-
-(*
-    | Enum   of string * t option list
-    | Tuple  of t list
-*)
+    [ basic_type
+    | `Tuple  of t list
+    | `List   of t list
+    | `Record of (string * t) list
+    | `Tagged of (string * t option) list
+    ]
 
   type fn =
-    | Broken
+    | Func
 
   type ast =
     { imports : import list
-    ; types : t tree
-    ; funcs : fn tree
+    ; types : t list
+    ; funcs : fn list
     }
+
+  let ast ~imports ~types ~funcs =
+    { imports; types; funcs }
 
   let import_to_string import =
     let or_empty f t =
@@ -136,17 +149,86 @@ module Elm = struct
     ; import ~exposing:["second"; "millisecond"] "Time"
     ]
 
+  let rec type_to_string = function
+    | `Bool   true  -> "True"
+    | `Bool   false -> "False"
+    | `Int    n -> Printf.sprintf "%d" n
+    | `Float  f -> Printf.sprintf "%f" f
+    | `String s -> Printf.sprintf "\"%s\"" s
+    | `Tuple ts ->
+      ts
+      |> List.map type_to_string
+      |> String.concat ", "
+      |> Printf.sprintf "( %s )"
+    | `List lst ->
+      lst
+      |> List.map type_to_string
+      |> String.concat ", "
+      |> Printf.sprintf "[ %s ]"
+    | `Record r ->
+      r
+      |> List.map (fun (k, v) ->
+         Printf.sprintf "%s: %s" k (type_to_string v))
+      |> String.concat ", "
+      |> Printf.sprintf "{ %s }"
+    | `Tagged t ->
+      let tagged tag args =
+        match args with
+        | None ->
+          Printf.sprintf "%s" tag
+        | Some args ->
+          Printf.sprintf "%s %s" tag (type_to_string args)
+      in
+      t
+      |> List.map (fun (tag, args) -> tagged tag args)
+      |> String.concat "\n| "
+
+  let func_to_string f = ""
+
+  let ast_to_string {imports;types;funcs} =
+    let joined_with f =
+      List.map f >>> String.concat "\n"
+    in
+    String.concat "\n"
+      [ "{- imports -}"
+      ; joined_with import_to_string imports
+      ; ""
+      ; "{- types -}"
+      ; joined_with type_to_string types
+      ; ""
+      ; "{- funcs -}"
+      ; joined_with func_to_string funcs
+      ]
 end
 
 let () =
-  List.iter Elm.( import_to_string >>> print_endline ) Elm.typical_imports
+  let types =
+    let open Elm in
+    [ `Bool true
+    ; `Bool false
+    ; `String "woop"
+    ; `List [ `String "okokok" ]
+    ; `Record
+        [ "first_name", `String "fred"
+        ; "last_name",  `String "jobes"
+        ; "age", `Int 36
+        ]
+    ]
+  in
+  let program = Elm.(
+      ast
+        ~imports:typical_imports
+        ~types
+        ~funcs:[]
+    )
+  in
+  print_endline @@ Elm.ast_to_string program
 
 let the_json =
   `O [ "data"
      , `A
          [ `O [ "image_url", `String "https://test.com" ]
          ; `O [ "image_url", `String "Up" ]
-         ; `O [ "image_url", `Bool false ]
          ]
      ; "data2"
      , `A
@@ -157,5 +239,11 @@ let the_json =
          ]
      ]
 
+
 let () =
+  print_endline "";
   print_endline @@ show_composite_decoder @@ decode the_json
+
+let () =
+  print_endline "";
+  print_endline @@ show_composite_decoder @@ decode @@ load_json "test-json.json"
